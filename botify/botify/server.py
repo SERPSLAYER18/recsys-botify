@@ -29,6 +29,7 @@ api = Api(app)
 
 # TODO Seminar 6 step 3: Create redis DB with tracks with diverse recommendations
 tracks_redis = Redis(app, config_prefix="REDIS_TRACKS")
+tracks_with_artist_recs = Redis(app, config_prefix="REDIS_TRACKS_WITH_ARTIST_RECS")
 tracks_with_diverse_recs_redis = Redis(app, config_prefix="REDIS_TRACKS_WITH_DIVERSE_RECS")
 artists_redis = Redis(app, config_prefix="REDIS_ARTIST")
 recommendations_redis = Redis(app, config_prefix="REDIS_RECOMMENDATIONS")
@@ -38,9 +39,12 @@ data_logger = DataLogger(app)
 
 # TODO Seminar 6 step 4: Upload tracks with diverse recommendations to redis DB
 catalog = Catalog(app).load(
-    app.config["TRACKS_CATALOG"], app.config["TOP_TRACKS_CATALOG"], app.config["TRACKS_WITH_DIVERSE_RECS_CATALOG"]
+    app.config["TRACKS_CATALOG"],
+    app.config["TOP_TRACKS_CATALOG"],
+    app.config["TRACKS_WITH_DIVERSE_RECS_CATALOG"],
+    app.config["REDIS_TRACKS_WITH_ARTIST_RECS_CATALOG"]
 )
-catalog.upload_tracks(tracks_redis.connection, tracks_with_diverse_recs_redis.connection)
+catalog.upload_tracks(tracks_redis.connection, tracks_with_diverse_recs_redis.connection, tracks_with_artist_recs.connection)
 catalog.upload_artists(artists_redis.connection)
 catalog.upload_recommendations(recommendations_redis.connection)
 catalog.upload_recommendations(recommendations_ub_redis.connection, "RECOMMENDATIONS_UB_FILE_PATH")
@@ -74,19 +78,20 @@ class NextTrack(Resource):
         args = parser.parse_args()
 
         # TODO Seminar 6 step 6: Wire RECOMMENDERS A/B experiment
-        treatment = Experiments.RECOMMENDERS.assign(user)
-        if treatment == Treatment.T1:
-            recommender = StickyArtist(tracks_redis.connection, artists_redis.connection, catalog)
-        elif treatment == Treatment.T2:
-            recommender = TopPop(tracks_redis.connection, catalog.top_tracks[:100])
-        elif treatment == Treatment.T3:
-            recommender = Indexed(tracks_redis.connection, recommendations_ub_redis.connection, catalog)
-        elif treatment == Treatment.T4:
+        # treatment = Experiments.AA.assign(user)
+        #
+        # if treatment == Treatment.INDEXED:
+        #     recommender = Random(tracks_redis.connection)
+        # else:
+        #     recommender = Random(tracks_redis.connection)
+
+        treatment = Experiments.CONTEXTUAL_ARTISTS.assign(user)
+        if treatment == Treatment.INDEXED:
             recommender = Indexed(tracks_redis.connection, recommendations_redis.connection, catalog)
-        elif treatment == Treatment.T5:
+        elif treatment == Treatment.CONTEXTUAL_BASIC:
             recommender = Contextual(tracks_redis.connection, catalog)
-        elif treatment == Treatment.T6:
-            recommender = Contextual(tracks_with_diverse_recs_redis.connection, catalog)
+        elif treatment == Treatment.CONTEXTUAL_ARTISTS:
+            recommender = Contextual(tracks_with_artist_recs.connection, catalog)
         else:
             recommender = Random(tracks_redis.connection)
 
@@ -127,7 +132,6 @@ api.add_resource(Hello, "/")
 api.add_resource(Track, "/track/<int:track>")
 api.add_resource(NextTrack, "/next/<int:user>")
 api.add_resource(LastTrack, "/last/<int:user>")
-
 
 if __name__ == "__main__":
     http_server = WSGIServer(("", 5000), app)
